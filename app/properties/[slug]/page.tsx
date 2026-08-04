@@ -6,6 +6,7 @@ import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import { getLocale } from "@/lib/i18n/get-locale";
 import { t } from "@/lib/i18n/dictionary";
 import { trackPropertyView } from "@/actions/analytics-actions";
+import { getSettings } from "@/lib/settings";
 
 export const revalidate = 60;
 
@@ -46,7 +47,7 @@ export default async function PropertyDetailPage({
     url: supabase.storage.from("property-images").getPublicUrl(img.storage_path).data.publicUrl,
   }));
 
-  const whatsappUrl = buildWhatsAppUrl(property);
+  const whatsappUrl = buildWhatsAppUrl(property, (await getSettings()).whatsapp_number);
   const title = locale === "ar" && property.title_ar ? property.title_ar : property.title_en;
   const description =
     locale === "ar" && property.description_ar ? property.description_ar : property.description_en;
@@ -119,7 +120,7 @@ export default async function PropertyDetailPage({
 
       {/* Sticky mobile CTA — a pattern real portals use well: the
           inquiry action stays reachable without scrolling back up. */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-base-900/10 bg-base-50/95 p-3 backdrop-blur sm:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-base-900/10 bg-base-50 p-3 sm:hidden">
         <a
           href={whatsappUrl}
           target="_blank"

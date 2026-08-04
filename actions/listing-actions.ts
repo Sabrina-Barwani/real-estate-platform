@@ -51,6 +51,7 @@ function parseForm(formData: FormData) {
     land_size: formData.get("land_size") || null,
     lat: formData.get("lat") || null,
     lng: formData.get("lng") || null,
+    featured: formData.get("featured") === "on",
   });
 }
 
@@ -187,6 +188,46 @@ export async function setListingStatus(id: string, status: string) {
 
   if (!error) {
     await writeAudit(`listing.status.${parsedStatus.data}`, id, actor);
+  }
+  revalidatePath("/admin/listings");
+}
+
+// ── Bulk actions ────────────────────────────────────────────────────────
+// Each bulk action re-validates the same way a single-item action would —
+// there is no separate, looser code path for bulk operations.
+
+export async function bulkSetStatus(ids: string[], status: string) {
+  const { supabase, actor } = await requireAdmin();
+  const parsedStatus = propertyStatusEnum.safeParse(status);
+  if (!parsedStatus.success || ids.length === 0) return;
+
+  const { error } = await supabase
+    .from("properties")
+    .update({ status: parsedStatus.data })
+    .in("id", ids);
+
+  if (!error) {
+    await writeAudit(`listing.bulk_status.${parsedStatus.data}`, null, actor, { ids });
+  }
+  revalidatePath("/admin/listings");
+}
+
+export async function bulkDeleteListings(ids: string[]) {
+  const { supabase, actor } = await requireAdmin();
+  if (ids.length === 0) return;
+
+  const { data: images } = await supabase
+    .from("property_images")
+    .select("storage_path")
+    .in("property_id", ids);
+
+  if (images && images.length > 0) {
+    await supabase.storage.from("property-images").remove(images.map((img) => img.storage_path));
+  }
+
+  const { error } = await supabase.from("properties").delete().in("id", ids);
+  if (!error) {
+    await writeAudit("listing.bulk_deleted", null, actor, { ids });
   }
   revalidatePath("/admin/listings");
 }

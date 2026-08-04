@@ -10,8 +10,9 @@ type Property = {
 
 // Builds a wa.me link pre-filled with the inquiry message. The visitor still
 // has to press Send themselves — this never sends anything automatically.
-export function buildWhatsAppUrl(property: Property): string {
-  const phone = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? "";
+// `phone` comes from the admin's Settings page (site_settings table) now,
+// not directly from an env var — see lib/settings.ts.
+export function buildWhatsAppUrl(property: Property, phone: string): string {
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
   const propertyUrl = `${siteUrl}/properties/${property.slug}`;
 

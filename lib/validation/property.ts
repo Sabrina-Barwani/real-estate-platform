@@ -27,6 +27,7 @@ export const propertySchema = z.object({
   land_size: z.coerce.number().positive().nullable().optional(),
   lat: z.coerce.number().nullable().optional(),
   lng: z.coerce.number().nullable().optional(),
+  featured: z.boolean().default(false),
 });
 
 export type PropertyInput = z.infer<typeof propertySchema>;

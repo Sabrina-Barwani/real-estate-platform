@@ -1,10 +1,11 @@
 import PublicShell from "@/components/public/public-shell";
 import { getLocale } from "@/lib/i18n/get-locale";
 import { t } from "@/lib/i18n/dictionary";
+import { getSettings } from "@/lib/settings";
 
-export default function ContactPage() {
+export default async function ContactPage() {
   const locale = getLocale();
-  const phone = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? "";
+  const { whatsapp_number: phone } = await getSettings();
   const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(
     "Hi, I have a question about your properties."
   )}`;
@@ -18,7 +19,7 @@ export default function ContactPage() {
           href={whatsappUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-block rounded-lg bg-emerald-600 px-8 py-3 font-medium text-white hover:bg-emerald-700"
+          className="inline-block rounded-lg bg-accent px-8 py-3 font-medium text-white hover:bg-accent-light"
         >
           {t(locale, "contact_button")}
         </a>

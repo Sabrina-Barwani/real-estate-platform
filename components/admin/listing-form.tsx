@@ -15,6 +15,7 @@ type Defaults = {
   wilayat?: string;
   area?: string;
   land_size?: number | null;
+  featured?: boolean;
 };
 
 function SubmitButton({ label }: { label: string }) {
@@ -110,6 +111,16 @@ export default function ListingForm({
           <input id="area" name="area" defaultValue={defaults?.area} required className={field} />
         </div>
       </fieldset>
+
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          name="featured"
+          defaultChecked={defaults?.featured}
+          className="h-4 w-4 rounded border-base-900/20"
+        />
+        Feature this listing on the homepage
+      </label>
 
       {state?.error && (
         <p className="text-sm text-red-600" role="alert">{state.error}</p>
