@@ -27,8 +27,28 @@ jobs:
   db-backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install postgresql-client 17
+        # Ubuntu 24.04's default apt repo only has postgresql-client-16,
+        # but Supabase currently runs Postgres 17.x — pg_dump refuses to
+        # run against a newer major server version than itself. This adds
+        # the official PostgreSQL apt repo (PGDG), which publishes every
+        # major client version separately, and installs 17 specifically.
+        # If Supabase upgrades to Postgres 18 in the future, bump the
+        # "-17" below (and in the apt-get install line) to match.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates gnupg lsb-release
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          # Make sure the version-17 binaries take precedence over any
+          # already-installed default client on PATH.
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
       - name: Dump database
         env:
