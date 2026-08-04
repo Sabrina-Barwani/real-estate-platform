@@ -1,0 +1,149 @@
+name: Daily backup
+
+# Two independent, free backups:
+#   1. db-backup     — pg_dump of the Postgres database (tables, RLS, etc.)
+#   2. storage-backup — the actual files in the property-images bucket
+#
+# IMPORTANT: job 1 does NOT include the photos in Storage. Supabase's
+# Storage service stores file bytes in an S3-compatible object store, not
+# in the Postgres database — pg_dump only ever sees `storage.objects`,
+# which is metadata (filenames, sizes, which property they belong to), not
+# the image bytes themselves. That's why this workflow has two separate
+# jobs instead of one.
+#
+# Both backups are uploaded as private GitHub Actions artifacts (visible
+# only to people with access to this repo) with a 14-day retention — they
+# are NEVER committed into the repository's git history. Committing binary
+# backups to git bloats the repo permanently (git never fully forgets a
+# committed blob, even after later deletion) and is unnecessary risk for
+# no benefit over artifacts here.
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC daily
+  workflow_dispatch: {} # run manually from the Actions tab any time
+
+jobs:
+  db-backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Dump database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          # Mask defensively even though GitHub already redacts registered
+          # secrets automatically — this also catches the value if it ever
+          # ends up embedded inside another string later in the logs.
+          echo "::add-mask::$SUPABASE_DB_URL"
+
+          mkdir -p backups
+          timestamp=$(date +%Y-%m-%d)
+          dump_file="backups/${timestamp}.dump"
+
+          # No `set -x` anywhere in this step, and the command below never
+          # echoes its own arguments — the connection string (which embeds
+          # the DB password) is never printed to the log at any point.
+          if ! pg_dump "$SUPABASE_DB_URL" --no-owner --no-privileges -F c -f "$dump_file"; then
+            echo "::error::pg_dump failed — see the step output above for the actual Postgres error. No backup was produced."
+            exit 1
+          fi
+
+          # Fail loudly if pg_dump exited 0 but somehow produced nothing —
+          # never let an empty/missing file quietly look like a success.
+          if [ ! -s "$dump_file" ]; then
+            echo "::error::Backup file $dump_file is missing or empty after pg_dump reported success. Treating this as a failed backup."
+            exit 1
+          fi
+
+          echo "Backup OK: $dump_file ($(du -h "$dump_file" | cut -f1))"
+          echo "DUMP_FILE=$dump_file" >> "$GITHUB_ENV"
+
+      - name: Upload database backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: ${{ env.DUMP_FILE }}
+          retention-days: 14
+          if-no-files-found: error
+
+  storage-backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download property-images bucket via S3 protocol
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SUPABASE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SUPABASE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.SUPABASE_S3_REGION }}
+          S3_ENDPOINT: ${{ secrets.SUPABASE_S3_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$AWS_ACCESS_KEY_ID"
+          echo "::add-mask::$AWS_SECRET_ACCESS_KEY"
+
+          mkdir -p storage-backup
+          if ! aws s3 sync "s3://property-images" ./storage-backup --endpoint-url "$S3_ENDPOINT"; then
+            echo "::error::Downloading the property-images bucket failed — see the AWS CLI output above."
+            exit 1
+          fi
+
+          file_count=$(find storage-backup -type f | wc -l)
+          if [ "$file_count" -eq 0 ]; then
+            echo "::warning::property-images bucket appears to be empty — 0 files downloaded. This may be expected (no photos uploaded yet) rather than an error."
+          else
+            echo "Downloaded $file_count file(s) from property-images."
+          fi
+
+          timestamp=$(date +%Y-%m-%d)
+          tar -czf "storage-backup-${timestamp}.tar.gz" -C storage-backup .
+
+          if [ ! -s "storage-backup-${timestamp}.tar.gz" ]; then
+            echo "::error::storage-backup-${timestamp}.tar.gz is missing or empty. Treating this as a failed backup."
+            exit 1
+          fi
+
+          echo "ARCHIVE_FILE=storage-backup-${timestamp}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload storage backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-backup-${{ github.run_id }}
+          path: ${{ env.ARCHIVE_FILE }}
+          retention-days: 14
+          if-no-files-found: error
+
+# ─────────────────────────────────────────────────────────────────────────
+# RESTORE INSTRUCTIONS
+# ─────────────────────────────────────────────────────────────────────────
+#
+# To restore the DATABASE from a backup:
+#   1. GitHub repo → Actions tab → "Daily backup" → pick the run → download
+#      the "db-backup-<run-id>" artifact → unzip it to get the .dump file.
+#   2. Make sure you have postgresql-client installed locally
+#      (`pg_restore --version` should work).
+#   3. Run:
+#        pg_restore --no-owner --no-privileges \
+#          -d "<your SUPABASE_DB_URL>" \
+#          path/to/2026-08-04.dump
+#      This restores into whichever database the connection string points
+#      to. Restoring into your LIVE production database will overwrite
+#      current data — if you just need to inspect/recover specific rows,
+#      restore into a fresh empty Supabase project instead, then copy out
+#      what you need.
+#
+# To restore the STORAGE PHOTOS from a backup:
+#   1. Download the "storage-backup-<run-id>" artifact, which is a
+#      storage-backup-<date>.tar.gz — extract it:
+#        tar -xzf storage-backup-2026-08-04.tar.gz -C ./restored-photos
+#   2. Upload the extracted files back into the property-images bucket
+#      with the AWS CLI, using the same S3 credentials as this workflow:
+#        aws s3 sync ./restored-photos "s3://property-images" \
+#          --endpoint-url "<your SUPABASE_S3_ENDPOINT>"
+#   3. The database restore (above) brings back the property_images TABLE
+#      ROWS (which filenames belong to which property) — you need BOTH
+#      the database restore and this storage restore for photos to
+#      actually reappear correctly on listings; either one alone is not
+#      enough.
